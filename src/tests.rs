@@ -95,6 +95,32 @@ fn rejects_invalid_mlkem_key() {
     assert_eq!(EncapsulationKey::from_bytes(&bytes), Err(Error::InvalidKey));
 }
 
+#[test]
+fn rejects_noncanonical_hqc_key() {
+    let mut rng = TestRng::new(b"noncanonical");
+    // Honest keys are always canonical.
+    for _ in 0..16 {
+        let (_, ek) = generate_key_pair_from_rng(&mut rng);
+        assert!(EncapsulationKey::from_bytes(&ek.to_bytes()).is_ok());
+    }
+    let (_, ek) = generate_key_pair_from_rng(&mut rng);
+    let bytes = ek.to_bytes();
+    // n = 35851, so bits 3..=7 of the last byte are padding.
+    for bit in 3..8 {
+        let mut b = bytes;
+        b[ENCAPSULATION_KEY_SIZE - 1] |= 1 << bit;
+        assert_eq!(
+            EncapsulationKey::from_bytes(&b),
+            Err(Error::InvalidKey),
+            "bit {bit}"
+        );
+    }
+    // A real coefficient bit in the last byte is fine.
+    let mut b = bytes;
+    b[ENCAPSULATION_KEY_SIZE - 1] ^= 1;
+    assert!(EncapsulationKey::from_bytes(&b).is_ok());
+}
+
 /// Flipping a bit in any component's ciphertext must change the decapsulated key.
 #[test]
 fn tamper_each_component() {
@@ -184,25 +210,74 @@ fn matches_manual_construction() {
     assert_eq!(&ct_bytes[1120..], ct_h.as_ref());
 }
 
-/// Pinned regression vector. If this changes, the wire format or derivation changed.
+/// Pinned regression vectors. If any of these change, the wire format or derivation changed.
+///
+/// Each entry: (seed, encapsulation randomness, SHA3-256(ek), SHA3-256(ct), ss).
+type Vector = (
+    [u8; 32],
+    [u8; ENCAPSULATION_RANDOMNESS_SIZE],
+    &'static str,
+    &'static str,
+    &'static str,
+);
+
 #[test]
-fn regression_vector() {
-    let seed: [u8; 32] = core::array::from_fn(|i| i as u8);
-    let randomness: [u8; ENCAPSULATION_RANDOMNESS_SIZE] =
-        core::array::from_fn(|i| (0xA0 + i) as u8);
+fn regression_vectors() {
+    let vectors: [Vector; 3] = [
+        (
+            core::array::from_fn(|i| i as u8),
+            core::array::from_fn(|i| (0xA0 + i) as u8),
+            "6aefbeccd8bc2edf1b64bde2ad78e21143d352f5c67ec452868ccec152c09eaf",
+            "dc5050997e72478efd288711f940da78da573922bf314f9e259c5025ee34b380",
+            "f773cc02b95806627052efd1df79328681a6fa251fbae5cb38c0cc6e0e0b75b6",
+        ),
+        (
+            [0x00; 32],
+            [0x00; ENCAPSULATION_RANDOMNESS_SIZE],
+            "abcfd897d11c4a2776867d7e400c3fe775ea8098efce1a9a4d32ec291d4df15d",
+            "5cc21684b9f7f15335c3ab81b56f6522e831dfc615f9c4a900922f9367495f17",
+            "65cd4a654692eb8e66ed6b7b95bcfa4b8064210619ff993e040913be341252d2",
+        ),
+        (
+            [0xFF; 32],
+            [0xFF; ENCAPSULATION_RANDOMNESS_SIZE],
+            "bc47e37d2ef7284c13e5cfa550dead37dcb1c91463666015caa7df48e1f352a8",
+            "102a78d9b0907b0043e4351cb20d0a98c0aa177ffef1faff0948349d1d25f664",
+            "219a01ffe264c2bf090136516ca37426b3d8ed7a373bbd3c1a0b0c5c0233d5cc",
+        ),
+    ];
 
-    let dk = DecapsulationKey::from_seed(seed);
-    let (ct, ss) = dk.encapsulation_key().encapsulate_inner(&randomness);
+    for (i, (seed, randomness, ek_hash, ct_hash, ss_hex)) in vectors.iter().enumerate() {
+        let dk = DecapsulationKey::from_seed(*seed);
+        let ek = dk.encapsulation_key();
+        let (ct, ss) = ek.encapsulate_inner(randomness);
+        assert_eq!(dk.decapsulate(&ct), ss);
 
-    let got = (
-        hex::encode(sha3(&dk.encapsulation_key().to_bytes())),
-        hex::encode(sha3(&ct.to_bytes())),
-        hex::encode(ss),
+        let got = (
+            hex::encode(sha3(&ek.to_bytes())),
+            hex::encode(sha3(&ct.to_bytes())),
+            hex::encode(ss),
+        );
+        let expected = (ek_hash.to_string(), ct_hash.to_string(), ss_hex.to_string());
+        assert_eq!(got, expected, "vector {i}: {got:#?}");
+    }
+}
+
+/// Pins decapsulation of a ciphertext whose X25519 part is the all-zero (low-order) point, so
+/// the "accept non-contributory" behaviour is fixed and testable by other implementations.
+#[test]
+fn regression_non_contributory() {
+    let dk = DecapsulationKey::from_seed([0x42; 32]);
+    let (ct, ss) = dk
+        .encapsulation_key()
+        .encapsulate_inner(&[0x24; ENCAPSULATION_RANDOMNESS_SIZE]);
+    let mut bytes = ct.to_bytes();
+    bytes[MLKEM_CT_SIZE..MLKEM_CT_SIZE + X25519_SIZE].fill(0);
+    let ss_zero = dk.decapsulate(&Ciphertext::from_bytes(&bytes));
+
+    assert_ne!(ss, ss_zero);
+    assert_eq!(
+        hex::encode(ss_zero),
+        "004e8c622b7b3a78dfa849beaf6e2d43832ce77e0fa05c1a4eb9ade3b88ea13e"
     );
-    let expected = (
-        "6aefbeccd8bc2edf1b64bde2ad78e21143d352f5c67ec452868ccec152c09eaf".to_string(),
-        "dc5050997e72478efd288711f940da78da573922bf314f9e259c5025ee34b380".to_string(),
-        "f773cc02b95806627052efd1df79328681a6fa251fbae5cb38c0cc6e0e0b75b6".to_string(),
-    );
-    assert_eq!(got, expected, "{got:#?}");
 }

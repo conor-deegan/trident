@@ -20,8 +20,8 @@ hazmat = []
 hqc-kem = { version = "=0.1.0-rc.0", default-features = false, features = ["kgen", "ecap", "dcap"] }
 ml-kem = { version = "0.3.4", default-features = false, features = ["hazmat", "zeroize"] }
 rand_core = "0.10"
-sha3 = { version = "0.12", default-features = false }
-shake = { version = "0.1", default-features = false }
+sha3 = { version = "0.12", default-features = false, features = ["zeroize"] }
+shake = { version = "0.1", default-features = false, features = ["zeroize"] }
 x25519-dalek = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
 zeroize = { version = "1.9", default-features = false }
 

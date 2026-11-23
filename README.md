@@ -63,6 +63,15 @@ ss   = Combiner(ss_M, ss_X, ss_H, ct_X, pk_X, ct_H, pk_H)
 
 Decapsulation never fails. Both post-quantum components use implicit rejection. An all-zero (non-contributory) X25519 output is accepted, matching X-Wing's default behaviour.
 
+### Encapsulation key validation
+
+`EncapsulationKey::from_bytes` rejects:
+
+* an ML-KEM-768 key that fails the FIPS 203 modulus check, and
+* an HQC-192 key that is not canonically encoded. `s` packs `n = 35851` bits into 4482 bytes, so the top 5 bits of `pk_H`'s last byte must be zero.
+
+As a result, every valid key has exactly one byte encoding.
+
 ### Combiner
 
 ```text
@@ -108,8 +117,10 @@ The crate is `no_std` and does not allocate.
 ## Status / caveats
 
 * **This is an experimental construction.** It is not standardized, and its security has not been formally analyzed beyond the reasoning above.
-* No external test vectors exist. The tests check the implementation against a hand-built recomputation from the upstream `ml-kem`, `hqc-kem` and `x25519-dalek` crates, and pin a regression vector.
+* No external test vectors exist. The tests check the implementation against a hand-built recomputation from the upstream `ml-kem`, `hqc-kem` and `x25519-dalek` crates. They also pin regression vectors, including edge-case inputs and a non-contributory X25519 ciphertext.
 * `hqc-kem` is a release candidate (`0.1.0-rc.0`) and is pinned exactly.
+* Trident's own code does no secret-dependent branching or indexing. Its side-channel resistance is bounded by that of the three component crates, and none of them has had an independent audit.
+* Secret state that Trident owns (the seed, the component secret keys, and the hash/XOF state) is wiped on drop. As with RustCrypto generally, compiler-generated copies of stack temporaries are not guaranteed to be wiped.
 * The RustCrypto `kem` traits are not implemented. They need `hybrid-array` type-level sizes for 5730 and 10098, which do not exist upstream.
 
 ## License

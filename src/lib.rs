@@ -41,6 +41,13 @@ const HQC_EK_SIZE: usize = hqc192::PUBLIC_KEY_SIZE;
 const HQC_CT_SIZE: usize = hqc192::CIPHERTEXT_SIZE;
 const HQC_M_SIZE: usize = hqc192::MESSAGE_SIZE;
 const HQC_SALT_SIZE: usize = hqc192::SALT_SIZE;
+/// HQC-192 code length `n` in bits. `pk_H = seed (32) || s`, where `s` packs `n` bits into
+/// `ceil(n / 8)` bytes, leaving `8 - n % 8` unused high bits in the last byte.
+const HQC_N: usize = 35851;
+/// Bits of the last byte of `pk_H` that must be zero in a canonical encoding.
+#[allow(clippy::cast_possible_truncation)]
+const HQC_EK_PAD_MASK: u8 = 0xFF << (HQC_N % 8) as u32;
+const _: () = assert!(HQC_EK_SIZE == 32 + HQC_N.div_ceil(8));
 
 /// Size in bytes of a serialized [`EncapsulationKey`]: `pk_M (1184) || pk_X (32) || pk_H (4514)`.
 pub const ENCAPSULATION_KEY_SIZE: usize = MLKEM_EK_SIZE + X25519_SIZE + HQC_EK_SIZE;
@@ -66,6 +73,9 @@ type MlKemCiphertext = Array<u8, U1088>;
 //   _m -> ML-KEM-768, _x -> X25519, _h -> HQC-192
 
 /// Generate a fresh Trident key pair using the system RNG.
+///
+/// # Panics
+/// If the operating system RNG fails.
 #[cfg(feature = "getrandom")]
 #[must_use]
 pub fn generate_key_pair() -> (DecapsulationKey, EncapsulationKey) {
@@ -95,10 +105,19 @@ impl EncapsulationKey {
     /// Parse an encapsulation key from its serialized form.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidKey`] if the ML-KEM-768 component fails the FIPS 203 modulus check.
+    /// Returns [`Error::InvalidKey`] if:
+    /// - the ML-KEM-768 component fails the FIPS 203 modulus check, or
+    /// - the HQC-192 component is not canonically encoded (any of the unused high bits of its
+    ///   last byte are set). `hqc-kem` silently accepts these, which would let several distinct
+    ///   byte strings act as the same HQC key; rejecting them keeps `ek` bytes and keys 1:1.
     pub fn from_bytes(bytes: &[u8; ENCAPSULATION_KEY_SIZE]) -> Result<Self, Error> {
         let (m, rest) = bytes.split_at(MLKEM_EK_SIZE);
         let (x, h) = rest.split_at(X25519_SIZE);
+
+        // Public data: a variable-time check is fine here.
+        if bytes[ENCAPSULATION_KEY_SIZE - 1] & HQC_EK_PAD_MASK != 0 {
+            return Err(Error::InvalidKey);
+        }
 
         let m: &Array<u8, _> = m.try_into().map_err(|_| Error::InvalidLength)?;
         let pk_m = MlKemEncapsulationKey::new(m).map_err(|_| Error::InvalidKey)?;
@@ -122,6 +141,9 @@ impl EncapsulationKey {
     }
 
     /// Encapsulate a fresh shared key using the system RNG.
+    ///
+    /// # Panics
+    /// If the operating system RNG fails.
     #[cfg(feature = "getrandom")]
     #[must_use]
     pub fn encapsulate(&self) -> (Ciphertext, SharedKey) {
@@ -248,6 +270,9 @@ impl DecapsulationKey {
     }
 
     /// Generate a fresh decapsulation key using the system RNG.
+    ///
+    /// # Panics
+    /// If the operating system RNG fails.
     #[cfg(feature = "getrandom")]
     #[must_use]
     pub fn generate() -> Self {
