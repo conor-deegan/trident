@@ -1,0 +1,63 @@
+[package]
+name = "trident"
+description = """
+Trident: a three-way hybrid KEM combining X25519, ML-KEM-768 (FIPS 203) and HQC-192 (FIPS 207)
+"""
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+categories = ["cryptography", "no-std"]
+keywords = ["kem", "hybrid", "post-quantum", "ml-kem", "hqc"]
+
+[features]
+default = []
+getrandom = ["dep:getrandom"]
+hazmat = []
+
+[dependencies]
+hqc-kem = { version = "=0.1.0-rc.0", default-features = false, features = ["kgen", "ecap", "dcap"] }
+ml-kem = { version = "0.3.4", default-features = false, features = ["hazmat", "zeroize"] }
+rand_core = "0.10"
+sha3 = { version = "0.12", default-features = false }
+shake = { version = "0.1", default-features = false }
+x25519-dalek = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
+zeroize = { version = "1.9", default-features = false }
+
+# optional dependencies
+getrandom = { version = "0.4", optional = true, features = ["sys_rng"] }
+
+[dev-dependencies]
+criterion = "0.8"
+getrandom = { version = "0.4", features = ["sys_rng"] }
+hex = "0.4"
+
+[[bench]]
+name = "trident"
+harness = false
+
+[lints.rust]
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unreachable_pub = "warn"
+unsafe_code = "forbid"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+cast_possible_truncation = "warn"
+doc_markdown = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+must_use_candidate = "warn"
+std_instead_of_core = "warn"
+unwrap_used = "warn"
+
+[profile.bench]
+debug = true
+
+[package.metadata.docs.rs]
+all-features = true
