@@ -6,6 +6,8 @@
 
 A three-way hybrid KEM combining **X25519**, **ML-KEM-768** (FIPS 203) and **HQC-192** (FIPS 207). It follows the X-Wing design and adds a third leg.
 
+Read the full [blog post here](https://www.conor.computer/blog/trident).
+
 ## Why three?
 
 X-Wing hedges between classical security (X25519) and post-quantum security (ML-KEM). Trident adds a second post-quantum assumption from a different family:
